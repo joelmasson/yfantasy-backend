@@ -1,4 +1,5 @@
 const PlayerStatsDefault = {
+    'GAME':0,
     'HIT':0,
     'ON_ICE_HIT':0, 
     'HIT_AGAINST':0,

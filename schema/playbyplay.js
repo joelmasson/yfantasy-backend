@@ -28,9 +28,9 @@ const Event = new Schema({
 
 const PlayByPlaySchema = new Schema({
     game_key: String,
-    timestamp: String,
+    timestamp: Date,
     gamePk: String,
-    homeId: Boolean,
+    homeId: Number,
     awayId: Number,
     homeScore: Number,
     awayScore: Number,

@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
 const PlayerStatsSchema = new Schema({
+    'GAME':{ type: Number, default:0},
     'HIT':{ type: Number, default:0},
     'ON_ICE_HIT':{ type: Number, default:0}, 
     'HIT_AGAINST':{ type: Number, default:0},
@@ -179,36 +180,37 @@ const PlayerStatsSchema = new Schema({
     'SHOOTOUT_SAVE':{ type: Number, default:0},
     'SHOOTOUT_MISS':{ type: Number, default:0},
     'SHOOTOUT_ON_ICE_MISS':{ type: Number, default:0},
-    CORSI_FOR: { type: Number, default:0},
-    CORSI_AGAINST: { type: Number, default:0},
-    PLUS_MINUS: { type: Number, default:0},
-    GAME_SCORE: { type: Number, default:0},
-    TOI: String
+    'CORSI_FOR': { type: Number, default:0},
+    'CORSI_AGAINST': { type: Number, default:0},
+    'PLUS_MINUS': { type: Number, default:0},
+    'GAME_SCORE': { type: Number, default:0},
+    'TOI': String
 })
 
 const PlayerSchema = new Schema({
-    y_player_id: String,
-    nhl_player_id: Number,
-    name: String,
-    team_name: String,
-    team_name_abbr: String,
-    league_abbr: String,
-    uniform_number: String,
-    image: String,
-    position_type: String,
-    rookie_season: Number,
+    active: Boolean,
+    currentTeamId: Number,
     eligible_positions: [{
         type: String
     }],
-    seasons: [{
-        year: String,
-        y_season_key: String
-    }],
+    fantasyTeamId: String,
+    firstName: String,
+    fullName: String,
+    image: String,
+    lastName: String,
+    league_abbr: String,
+    nhl_player_id: Number,
+    position_type: String,
+    rookie: Boolean,
     stats: [{
         coverage_type: String, //Season
-        coverage_value: String, // 20202021
+        coverage_value: Number, // 20202021
         stats: PlayerStatsSchema,
-    }]
+    }],
+    team_name: String,
+    team_name_abbr: String,
+    uniform_number: String,
+    y_player_id: String
 }, {timestamps: true});
 const Player = mongoose.model("Player", PlayerSchema);
 
