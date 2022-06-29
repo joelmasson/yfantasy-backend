@@ -358,25 +358,19 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
         });
     } else if (req.params.resource === 'players') {
         if (req.body.queryBy === 'name') {
-            console.log(req.body.player_names)
             Player.find({ name: {$in:req.body.player_names} }).then(players => {
                 res.send(players)
             }).catch(err => {
                 console.log("players", err)
             })
-        } else if (req.body.queryBy === 'fantasyTeamId') {
-            Player.find({ fantasyTeamId: {$in:req.body.value} }).then(players => {
-                res.send(players)
-            }).catch(err => {
-                console.log("players", err)
-            })        
         } else if (req.body.teams !== undefined) {
             Player.find({ currentTeamId: {$in:req.body.teams}, fantasyTeamId: null }).then(players => {
                 res.send(players)
             }).catch(err => {
                 console.log("plauers", err)
             })
-        } else if (req.body.action === 'updateOwnership') {
+        } 
+        if (req.body.action === 'updateOwnership') {
             let playerUpdate = req.body.players.map(player => {
                 return {
                     'updateOne': {
@@ -397,6 +391,13 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
             }).catch(function (err) {
                 console.log('err 1', err)
             });
+        } else {
+            console.log('proposed', req.body)
+            Player.find(req.body.query).sort(req.body.sort).limit(req.body.limit).then(players => {
+                res.send(players)
+            }).catch(err => {
+                console.log("players", err)
+            })
         }
     } else if (req.params.resource === 'season') {
         Season.create(req.body.data).then(function (season) {
@@ -602,7 +603,6 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
                             stats: statsData
                         }
                     })[0]
-                    console.log(gameData)
                     let coverage_value = parseInt(playByPlays[playByPlays.length - 1].gamePk.toString().substring(0, 4))
                     let increment = Object.assign({}, ...Object.keys(seasonStats).map(stat => {
                         return {
@@ -658,7 +658,7 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
                 res.send("No PBP available")
             }
         } else if (req.body.action === 'internal') {
-            PlayByPlay.find({ timestamp: { $gte: new Date(req.body.start), $lt: new Date(req.body.end) } }).then(pbp => {
+            PlayByPlay.find({ timestamp: { $gte: new Date(req.body.start), $lte: new Date(req.body.end) } }).then(pbp => {
                 if (pbp.length === 0) {
                     res.send('no play by plays')
                 } else {
