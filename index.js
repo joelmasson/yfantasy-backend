@@ -34,8 +34,10 @@ const Player = require('./schema/player')
 const Season = require('./schema/season')
 const PlayByPlay = require('./schema/playbyplay')
 const Team = require('./schema/team')
-const PlayerStatsDefault = require('./schema/stats')
-const publicRoot = '/Applications/MAMP/htdocs/vuecli/vueauthclient/dist'
+const PlayerStats = require('./schema/stats')
+const defaultGameData = require('./data')
+
+const publicRoot = '/Users/joel/Documents/Sites/yfantasy-front-end/'
 
 const authMiddleware = (req, res, next) => {
     if (!req.isAuthenticated()) {
@@ -130,6 +132,7 @@ app.get("/", (req, res, next) => {
 app.get("/api/login", (req, res, next) => {
     passport.authenticate("oauth2", (err, user, info) => {
         if (err) {
+            console.log(err)
             return next(err);
         }
 
@@ -151,13 +154,14 @@ app.get("/api/logout", function (req, res) {
 
 app.get("/auth/yahoo", passport.authenticate("oauth2", { failureRedirect: "/" }),
     function (req, res, user) {
+        console.log(req, res, user)
         res.redirect("/dashboard");
     }
 );
 
 app.get("/auth/yahoo/callback", passport.authenticate("oauth2", { failureRedirect: "/" }),
     function (req, res) {
-        res.redirect(req.session.redirect || "/#/dashboard");
+        res.redirect(req.session.redirect || "/dashboard");
     }
 );
 
@@ -238,7 +242,7 @@ app.post("/api/yahoo/:resource/:subresource", authMiddleware, function (req, res
     // could be key, another key, callback too...
     // 2 - would be key or filters or subs, callback
     // 1 - callback only...
-    return yf[resource][subresource].apply(yf[resource], args).catch(err => {console.log(err)})
+    return yf[resource][subresource].apply(yf[resource], args).catch(err => { console.log(err) })
 })
 
 app.get("/api/:resource/:id", async function (req, res, next) {
@@ -263,7 +267,7 @@ app.get("/api/:resource/:id", async function (req, res, next) {
                 return {
                     'updateOne': {
                         'filter': { 'nhl_player_id': player.id },
-                        'update': { '$set': { 'name': player.fullName, 'active': player.active, 'rookie': player.rookie, 'currentTeamId': player.currentTeamId, 'position':player.primaryPosition } },
+                        'update': { '$set': { 'name': player.fullName, 'active': player.active, 'rookie': player.rookie, 'currentTeamId': player.currentTeamId, 'position': player.primaryPosition } },
                         'upsert': true
                     }
                 }
@@ -328,7 +332,7 @@ app.get("/api/:resource/:id", async function (req, res, next) {
         }
     }
 })
-app.post("/api/:resource", authMiddleware, async function (req, res, next) {
+app.post("/api/:resource", async function (req, res, next) {
     if (req.params.resource === 'games') {
         req.body.leagues.forEach(data => {
             Game.create(data).then(function (game) {
@@ -337,7 +341,7 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
         });
     } else if (req.params.resource === 'player') {
         let data = req.body.data
-        Player.update({ name: req.body.data.name }, {
+        Player.updateOne({ name: req.body.data.name }, {
             $set: {
                 y_player_id: data.y_player_id,
                 name: data.name,
@@ -358,31 +362,31 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
         });
     } else if (req.params.resource === 'players') {
         if (req.body.queryBy === 'name') {
-            Player.find({ name: {$in:req.body.player_names} }).then(players => {
+            Player.find({ name: { $in: req.body.player_names } }).then(players => {
                 res.send(players)
             }).catch(err => {
                 console.log("players", err)
             })
         } else if (req.body.teams !== undefined) {
-            Player.find({ currentTeamId: {$in:req.body.teams}, fantasyTeamId: null }).then(players => {
+            Player.find({ currentTeamId: { $in: req.body.teams }, fantasyTeamId: null }).then(players => {
                 res.send(players)
             }).catch(err => {
                 console.log("plauers", err)
             })
-        } 
+        }
         if (req.body.action === 'updateOwnership') {
             let playerUpdate = req.body.players.map(player => {
                 return {
                     'updateOne': {
                         'filter': { name: player.name },
-                        'update': { $set: {fantasyTeamId: player.fantasyTeamId} },
+                        'update': { $set: { fantasyTeamId: player.fantasyTeamId } },
                     }
                 }
             })
             let cleanup = [{
                 'updateMany': {
-                    'filter': {fantasyTeamId: {$ne: null}},
-                    'update': { $set: {fantasyTeamId: null} },
+                    'filter': { fantasyTeamId: { $ne: null } },
+                    'update': { $set: { fantasyTeamId: null } },
                 }
             }]
             let updatePlayerOwnership = cleanup.concat(playerUpdate)
@@ -503,162 +507,98 @@ app.post("/api/:resource", authMiddleware, async function (req, res, next) {
                 }).catch(function (err) {
                     console.log('err', err)
                 });
-                let players = {}
-                playByPlays.forEach(game => {
-                    game.events.forEach((event, i) => {
-                        if (players[event.playerId] === undefined) {
-                            players[event.playerId] = {
-                                [game.gamePk]: {
-                                    // 'stats': PlayerStatsDefault
-                                    'stats':{}
-                                }
-                            }
-                        }
-                        if (players[event.playerId][game.gamePk] === undefined){
-                            players[event.playerId][game.gamePk] = {'stats':{}}
-                        }
+                let playerGameStats = playByPlays.map(game => {
+                    // get all players
+                    let players = game.events.map(event => {
+                        return event.playerId
                     })
-                    game.events.forEach((event, i) => {
-                        if (players[event.playerId][game.gamePk].stats[event.type] === undefined){
+                    // Remove dups
+                    players = [...new Set(players)]
+                    // get playerEvents
+                    let playerStats = players.map(player => {
+                        let playerEvents = game.events.filter(event => {
+                            if (player === event.playerId) { return event }
+                        })
+                        let stats = defaultGameData;
+                        playerEvents.forEach((event, i) => {
+                            stats[event.type] = + 1;
                             if (event.type === "ASSIST" && game.events[i - 1].type === "ASSIST") {
-                                players[event.playerId][game.gamePk].stats.ASSIST_2 = 1
+                                stats.ASSIST_2 = stats.ASSIST_2 === undefined ? 1 : stats.ASSIST_2 + 1
                             } else {
-                                players[event.playerId][game.gamePk].stats[event.type] = 1
                                 if (event.teamStrength - event.opposingStrength === 1) { // 5 on 4 pp
-                                    players[event.playerId][game.gamePk].stats['5_ON_4_' + event.type] = 1
+                                    stats['5_ON_4_' + event.type] = stats['5_ON_4_' + event.type] === undefined ? 1 : stats['5_ON_4_' + event.type] + 1
                                 } else if (event.teamStrength - event.opposingStrength === 2) { // 5 on 3 pp
-                                    players[event.playerId][game.gamePk].stats['5_ON_3_' + event.type] = 1
+                                    stats['5_ON_3_' + event.type] = stats['5_ON_3_' + event.type] === undefined ? 1 : stats['5_ON_3_' + event.type] + 1
                                 } else if (event.opposingStrength - event.teamStrength === 1) { // 4 on 5 pk
-                                    players[event.playerId][game.gamePk].stats['4_ON_5_' + event.type] = 1
+                                    stats['4_ON_5_' + event.type] = stats['4_ON_5_' + event.type] === undefined ? 1 : stats['4_ON_5_' + event.type] + 1
                                 } else if (event.opposingStrength - event.teamStrength === 2) { // 3 on 5 pk
-                                    players[event.playerId][game.gamePk].stats['3_ON_5_' + event.type] = 1
+                                    stats['3_ON_5_' + event.type] = stats['3_ON_5_' + event.type] === undefined ? 1 : stats['3_ON_5_' + event.type] + 1
                                 }
-                            }
-                        } else {
-                            if (event.type === "ASSIST" && game.events[i - 1].type === "ASSIST") {
-                                players[event.playerId][game.gamePk].stats.ASSIST_2 += 1
-                            } else {
-                                players[event.playerId][game.gamePk].stats[event.type] += 1
-                                if (event.teamStrength - event.opposingStrength === 1) { // 5 on 4 pp
-                                    players[event.playerId][game.gamePk].stats['5_ON_4_' + event.type] += 1
-                                } else if (event.teamStrength - event.opposingStrength === 2) { // 5 on 3 pp
-                                    players[event.playerId][game.gamePk].stats['5_ON_3_' + event.type] += 1
-                                } else if (event.opposingStrength - event.teamStrength === 1) { // 4 on 5 pk
-                                    players[event.playerId][game.gamePk].stats['4_ON_5_' + event.type] += 1
-                                } else if (event.opposingStrength - event.teamStrength === 2) { // 3 on 5 pk
-                                    players[event.playerId][game.gamePk].stats['3_ON_5_' + event.type] += 1
-                                }
-                            }
-                        }
-                    })
-                })
-                let mappedSeasonUpdate = []
-                let setSeason = []
-                console.log(players)
-                let mappedPlayers = Object.keys(players).map(playerID => {
-                    let seasonStats = []
-                    let gameData = Object.keys(players[playerID]).map(game => {
-                        let statsData = players[playerID][game].stats
-                        Object.keys(PlayerStatsDefault).forEach(stat => {
-                            if (isNaN(statsData[stat]) || statsData[stat] === undefined){
-                                statsData[stat] = 0
                             }
                         })
-
-                        statsData['TOI'] = playerShifts.filter(event => {
-                            if (event.playerId === parseInt(playerID)) {
+                        stats['TOI'] = playerShifts.filter(event => {
+                            if (event.playerId === parseInt(player)) {
                                 return event
                             }
                         }).map(event => {
                             return event.length
-                        }).reduce((a,b) => a + b)
-                        
-                        if (statsData['SAVE'] > 0) {
-                            statsData['SHUTOUT'] = playByPlays.filter(game => {
-                                if (game.goalieDecisionId === playerID && game.resultType === "WIN" && game.opposingTeamScore === 0) {
+                        }).reduce((a, b) => a + b)
+                        if (stats['SAVE'] > 0) {
+                            stats['SHUTOUT'] = playByPlays.filter(game => {
+                                if (game.goalieDecisionId === player && game.resultType === "WIN" && game.opposingTeamScore === 0) {
                                     return game
                                 }
                             }).length
-                            statsData['SAVE_PERCENTAGE'] = statsData['SAVE'] / (statsData['SAVE'] + statsData['GOAL_ALLOWED'])
-                            statsData['GOALS_AGAINST_AVERAGE'] = (statsData['GOAL_ALLOWED'] / (statsData['TOI']/60)) * 60
-                            statsData['GAME_SCORE'] = (-0.75 * statsData['GOAL_ALLOWED']) + (0.1 * statsData['SAVE'])
+                            stats['SAVE_PERCENTAGE'] = stats['SAVE'] / (stats['SAVE'] + stats['GOAL_ALLOWED'])
+                            stats['GOALS_AGAINST_AVERAGE'] = (stats['GOAL_ALLOWED'] / (stats['TOI'] / 60)) * 60
+                            stats['GAME_SCORE'] = (-0.75 * stats['GOAL_ALLOWED']) + (0.1 * stats['SAVE'])
                         } else {
-                            let cf = (statsData['ON_ICE_SHOT'] - statsData['5_ON_4_ON_ICE_SHOT'] - statsData['5_ON_3_ON_ICE_SHOT'] - statsData['4_ON_5_ON_ICE_SHOT'] - statsData['3_ON_5_ON_ICE_SHOT']) + (statsData['ON_ICE_SHOT_BLOCKED'] - statsData['5_ON_4_ON_ICE_SHOT_BLOCKED'] - statsData['5_ON_3_ON_ICE_SHOT_BLOCKED'] - statsData['4_ON_5_ON_ICE_SHOT_BLOCKED'] - statsData['3_ON_5_ON_ICE_SHOT_BLOCKED']) + (statsData['ON_ICE_SHOT_MISSED'] - statsData['5_ON_4_ON_ICE_SHOT_MISSED'] - statsData['5_ON_3_ON_ICE_SHOT_MISSED'] - statsData['4_ON_5_ON_ICE_SHOT_MISSED'] - statsData['3_ON_5_ON_ICE_SHOT_MISSED'])
-                            let ca = (statsData['ON_ICE_SAVE'] - statsData['5_ON_4_ON_ICE_SAVE'] - statsData['5_ON_3_ON_ICE_SAVE'] - statsData['4_ON_5_ON_ICE_SAVE'] - statsData['3_ON_5_ON_ICE_SAVE']) + (statsData['ON_ICE_BLOCKED_SHOT'] - statsData['5_ON_4_ON_ICE_BLOCKED_SHOT'] - statsData['5_ON_3_ON_ICE_BLOCKED_SHOT'] - statsData['4_ON_5_ON_ICE_BLOCKED_SHOT'] - statsData['3_ON_5_ON_ICE_BLOCKED_SHOT']) + (statsData['ON_ICE_MISSED_SHOT'] - statsData['5_ON_4_ON_ICE_MISSED_SHOT'] - statsData['5_ON_3_ON_ICE_MISSED_SHOT'] - statsData['4_ON_5_ON_ICE_MISSED_SHOT'] - statsData['3_ON_5_ON_ICE_MISSED_SHOT'])
-                            statsData['CORSI_FOR'] = cf
-                            statsData['CORSI_AGAINST'] = ca
-                            statsData['PLUS_MINUS'] = (statsData['ON_ICE_GOAL'] - statsData['5_ON_4_ON_ICE_GOAL'] - statsData['5_ON_3_ON_ICE_GOAL'] - statsData['4_ON_5_ON_ICE_GOAL'] - statsData['3_ON_5_ON_ICE_GOAL']) - (statsData['ON_ICE_GOAL_ALLOWED'] - statsData['5_ON_4_ON_ICE_GOAL_ALLOWED'] - statsData['5_ON_3_ON_ICE_GOAL_ALLOWED'] - statsData['4_ON_5_ON_ICE_GOAL_ALLOWED'] - statsData['3_ON_5_ON_ICE_GOAL_ALLOWED'])
-                            statsData['GAME_SCORE'] = (0.75 * statsData['GOAL']) + (0.7 * statsData['ASSIST']) + (0.55 * statsData['ASSIST_2']) + (0.075 * statsData['SHOT']) + (0.05 * statsData['BLOCKED_SHOT']) + (0.15 * statsData['PENALTY_AGAINST']) - (0.15 * statsData['PENALTY_FOR']) + (0.01 * statsData['FACEOFF_WIN']) - (0.01 * statsData['FACEOFF_LOSS']) + (0.05 * cf) - (0.05 * ca) + (0.15 * statsData['ON_ICE_GOAL']) - (0.15 * statsData['ON_ICE_GOAL_ALLOWED'])
+                            let cf = (stats['ON_ICE_SHOT'] - stats['5_ON_4_ON_ICE_SHOT'] - stats['5_ON_3_ON_ICE_SHOT'] - stats['4_ON_5_ON_ICE_SHOT'] - stats['3_ON_5_ON_ICE_SHOT']) + (stats['ON_ICE_SHOT_BLOCKED'] - stats['5_ON_4_ON_ICE_SHOT_BLOCKED'] - stats['5_ON_3_ON_ICE_SHOT_BLOCKED'] - stats['4_ON_5_ON_ICE_SHOT_BLOCKED'] - stats['3_ON_5_ON_ICE_SHOT_BLOCKED']) + (stats['ON_ICE_SHOT_MISSED'] - stats['5_ON_4_ON_ICE_SHOT_MISSED'] - stats['5_ON_3_ON_ICE_SHOT_MISSED'] - stats['4_ON_5_ON_ICE_SHOT_MISSED'] - stats['3_ON_5_ON_ICE_SHOT_MISSED'])
+                            let ca = (stats['ON_ICE_SAVE'] - stats['5_ON_4_ON_ICE_SAVE'] - stats['5_ON_3_ON_ICE_SAVE'] - stats['4_ON_5_ON_ICE_SAVE'] - stats['3_ON_5_ON_ICE_SAVE']) + (stats['ON_ICE_BLOCKED_SHOT'] - stats['5_ON_4_ON_ICE_BLOCKED_SHOT'] - stats['5_ON_3_ON_ICE_BLOCKED_SHOT'] - stats['4_ON_5_ON_ICE_BLOCKED_SHOT'] - stats['3_ON_5_ON_ICE_BLOCKED_SHOT']) + (stats['ON_ICE_MISSED_SHOT'] - stats['5_ON_4_ON_ICE_MISSED_SHOT'] - stats['5_ON_3_ON_ICE_MISSED_SHOT'] - stats['4_ON_5_ON_ICE_MISSED_SHOT'] - stats['3_ON_5_ON_ICE_MISSED_SHOT'])
+                            stats['CORSI_FOR'] = cf
+                            stats['CORSI_AGAINST'] = ca
+                            stats['PLUS_MINUS'] = (stats['ON_ICE_GOAL'] - stats['5_ON_4_ON_ICE_GOAL'] - stats['5_ON_3_ON_ICE_GOAL'] - stats['4_ON_5_ON_ICE_GOAL'] - stats['3_ON_5_ON_ICE_GOAL']) - (stats['ON_ICE_GOAL_ALLOWED'] - stats['5_ON_4_ON_ICE_GOAL_ALLOWED'] - stats['5_ON_3_ON_ICE_GOAL_ALLOWED'] - stats['4_ON_5_ON_ICE_GOAL_ALLOWED'] - stats['3_ON_5_ON_ICE_GOAL_ALLOWED'])
+                            stats['GAME_SCORE'] = (0.75 * stats['GOAL']) + (0.7 * stats['ASSIST']) + (0.55 * stats['ASSIST_2']) + (0.075 * stats['SHOT']) + (0.05 * stats['BLOCKED_SHOT']) + (0.15 * stats['PENALTY_AGAINST']) - (0.15 * stats['PENALTY_FOR']) + (0.01 * stats['FACEOFF_WIN']) - (0.01 * stats['FACEOFF_LOSS']) + (0.05 * cf) - (0.05 * ca) + (0.15 * stats['ON_ICE_GOAL']) - (0.15 * stats['ON_ICE_GOAL_ALLOWED'])
                         }
-                        if (seasonStats.length === 0) {
-                            seasonStats = statsData
-                        } else {
-                            Object.keys(statsData).forEach(stat => {
-                                seasonStats[stat] += statsData[stat]
-                            })
-                        }
-                        return {
-                            coverage_type: 'Game',
-                            coverage_value: parseInt(game), // Game ID
-                            stats: statsData
-                        }
-                    })[0]
-                    let coverage_value = parseInt(playByPlays[playByPlays.length - 1].gamePk.toString().substring(0, 4))
-                    let increment = Object.assign({}, ...Object.keys(seasonStats).map(stat => {
-                        return {
-                            ['stats.$[cover].stats.' + stat]: seasonStats[stat]
-                        }
-                    }))
-                    setSeason.push({
-                        'updateOne': {
-                            'filter': { nhl_player_id: parseInt(playerID), "stats.coverage_value": {$ne : coverage_value} },
-                            'update': { $push: {'stats': {'coverage_type':'Season', 'coverage_value':parseInt(coverage_value), 'stats': PlayerStatsDefault} } },
+                        return { 
+                            'updateOne': {
+                                'filter': { gamePk: game.gamePk, playerId: player, ...stats },
+                                'update': { $set: { gamePk: game.gamePk, playerId: player, ...stats } },
+                                'upsert': true,
+                            }
                         }
                     })
-                    mappedSeasonUpdate.push({
-                        'updateOne': {
-                            'filter': { nhl_player_id: parseInt(playerID) },
-                            'update': {$inc: increment},
-                            'arrayFilters': [{ 'cover.coverage_value': { $eq: coverage_value } }],
-                            'upsert': true
-                        }
-                    })
-                    let action = {
-                        'updateOne': {
-                            'filter': { nhl_player_id: parseInt(playerID) },
-                            'update': { $push: { stats: gameData } },
-                            'upsert': true,
-                        }
-                    }
-                    return action
+                    return playerStats
                 })
-                await Player.collection.bulkWrite(mappedPlayers).then(function (data) {
-                    // console.log('P', data)
+                await PlayerStats.collection.bulkWrite(...playerGameStats).then(function (data) {
+                    console.log('PS', data)
                     // res.send(data)
-                    result.push(date)
+                    result.push(data)
                 }).catch(function (err) {
                     console.log('P err', err)
-                })
-                await Player.collection.bulkWrite(setSeason).then(function (data) {
-                    // console.log('setSeason', data)
-                    // res.send(data)
-                    result.push(date)
-                }).catch(function (err) {
-                    console.log('setSeason err', err)
-                })
-                await Player.collection.bulkWrite(mappedSeasonUpdate).then(function (data) {
-                    // console.log('SeasonUpdate', data)
-                    // res.send(data)
-                    result.push(date)
-                }).catch(function (err) {
-                    console.log('S err', err)
                 })
                 res.send(result)
             } else {
                 res.send("No PBP available")
             }
         } else if (req.body.action === 'internal') {
-            PlayByPlay.find({ timestamp: { $gte: new Date(req.body.start), $lte: new Date(req.body.end) } }).then(pbp => {
+            PlayByPlay.aggregate([
+                {
+                    '$match': {
+                        'timestamp': {
+                            '$gte': new Date(req.body.start),
+                            '$lt': new Date(req.body.end)
+                        }
+                    }
+                }, {
+                    '$project': {
+                        'gamePk': '$gamePk',
+                        'timestamp': '$timestamp',
+                        'home': '$homeId',
+                        'away': '$awayId'
+                    }
+                }
+            ]).then(pbp => {
                 if (pbp.length === 0) {
                     res.send('no play by plays')
                 } else {
