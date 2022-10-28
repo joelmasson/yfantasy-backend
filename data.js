@@ -13,10 +13,6 @@ let users = [
     }
 ];
 let defaultGameData = {
-  'nhl_player_id': 0,
-  'coverage_type': 0, //Season
-  'coverage_value': 0, // 20202021
-  'GAME': 0,
   'HIT': 0,
   'ON_ICE_HIT': 0, 
   'HIT_AGAINST': 0,
