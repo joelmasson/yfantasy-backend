@@ -605,7 +605,7 @@ app.post("/api/:resource", async function (req, res, next) {
           'as': 'previousGames',
           'pipeline': [
             { '$sort': { 'gamePk': 1 } },
-            { '$limit': req.body.filter }
+            { '$limit': req.body.limit }
           ],
         }
       }, {
@@ -674,7 +674,9 @@ app.post("/api/:resource", async function (req, res, next) {
                 }
               }
             }
-          }
+          },
+          'name':true,
+          'nhl_player_id':true
         }
       }
     ]).then(players => {
