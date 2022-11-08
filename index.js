@@ -245,7 +245,7 @@ app.post("/api/yahoo/:resource/:subresource", authMiddleware, function (req, res
   return yf[resource][subresource].apply(yf[resource], args).catch(err => { console.log(err) })
 })
 
-app.get("/api/:resource/:id", async function (req, res, next) {
+app.get("/api/:resource/:id", authMiddleware, async function (req, res, next) {
   if (req.params.resource === 'games') {
     Game.find({}).then(function (games) {
       res.send(games)
@@ -361,7 +361,105 @@ app.post("/api/:resource", async function (req, res, next) {
       console.log('err', err)
     });
   } else if (req.params.resource === 'players') {
-    if (req.body.queryBy === 'name') {
+    if(req.body.statType === 'averages') {
+      // FILTER
+      // last x # of games
+      // gamePK between
+      Player.aggregate([
+        {
+          '$match': {
+            'name': {
+              '$in': req.body.data.player_names
+            }
+          }
+        }, {
+          '$lookup': {
+            'from': 'stats',
+            'localField': 'nhl_player_id',
+            'foreignField': 'playerId',
+            'as': 'previousGames',
+            'pipeline': [
+              { '$sort': { 'gamePk': 1 } },
+              { '$limit': req.body.limit }
+            ],
+          }
+        }, {
+          '$project': {
+            'previousGames': {
+              '$let': {
+                'vars': {
+                  'red': {
+                    '$reduce': {
+                      'input': {
+                        '$map': {
+                          'input': '$previousGames',
+                          'in': {
+                            '$objectToArray': '$$this'
+                          }
+                        }
+                      },
+                      'initialValue': [],
+                      'in': {
+                        '$concatArrays': [
+                          '$$value', '$$this'
+                        ]
+                      }
+                    }
+                  }
+                },
+                'in': {
+                  '$arrayToObject': {
+                    '$map': {
+                      'input': {
+                        '$setUnion': [
+                          '$$red.k'
+                        ]
+                      },
+                      'as': 'm',
+                      'in': {
+                        '$let': {
+                          'vars': {
+                            'fil': {
+                              '$filter': {
+                                'input': '$$red',
+                                'as': 'd',
+                                'cond': {
+                                  '$eq': [
+                                    '$$d.k', '$$m'
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          'in': {
+                            'k': '$$m',
+                            'v': {
+                              '$divide': [
+                                {
+                                  '$sum': '$$fil.v'
+                                }, {
+                                  '$size': '$$fil'
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            'name':true,
+            'nhl_player_id':true
+          }
+        }
+      ]).then(players => {
+        res.send(players)
+      }).catch(err => {
+        console.log("players", err)
+      })
+    } else if (req.body.queryBy === 'name') {
       PlayByPlay.aggregate([
         {
           '$match': {
@@ -388,8 +486,7 @@ app.post("/api/:resource", async function (req, res, next) {
       }).catch(err => {
         console.log("plauers", err)
       })
-    }
-    if (req.body.action === 'updateOwnership') {
+    } else if (req.body.action === 'updateOwnership') {
       let playerUpdate = req.body.players.map(player => {
         return {
           'updateOne': {
@@ -495,7 +592,7 @@ app.post("/api/:resource", async function (req, res, next) {
                 }
               }).length
               accumulatingStats.SAVE_PERCENTAGE = accumulatingStats['SAVE'] / (accumulatingStats['SAVE'] + accumulatingStats['GOAL_ALLOWED'])
-              accumulatingStats.GOALS_AGAINST_AVERAGE = (accumulatingStats['GOAL_ALLOWED'] / (accumulatingStats['TOI'] / 60)) * 60
+              accumulatingStats.GOALS_AGAINST_AVERAGE = (accumulatingStats['GOAL_ALLOWED'] * 60) / accumulatingStats['TOI']
               accumulatingStats.GAME_SCORE = (-0.75 * accumulatingStats['GOAL_ALLOWED']) + (0.1 * accumulatingStats['SAVE'])
             } else {
               let cf = (accumulatingStats['ON_ICE_SHOT'] - accumulatingStats['5_ON_4_ON_ICE_SHOT'] - accumulatingStats['5_ON_3_ON_ICE_SHOT'] - accumulatingStats['4_ON_5_ON_ICE_SHOT'] - accumulatingStats['3_ON_5_ON_ICE_SHOT']) + (accumulatingStats['ON_ICE_SHOT_BLOCKED'] - accumulatingStats['5_ON_4_ON_ICE_SHOT_BLOCKED'] - accumulatingStats['5_ON_3_ON_ICE_SHOT_BLOCKED'] - accumulatingStats['4_ON_5_ON_ICE_SHOT_BLOCKED'] - accumulatingStats['3_ON_5_ON_ICE_SHOT_BLOCKED']) + (accumulatingStats['ON_ICE_SHOT_MISSED'] - accumulatingStats['5_ON_4_ON_ICE_SHOT_MISSED'] - accumulatingStats['5_ON_3_ON_ICE_SHOT_MISSED'] - accumulatingStats['4_ON_5_ON_ICE_SHOT_MISSED'] - accumulatingStats['3_ON_5_ON_ICE_SHOT_MISSED'])
@@ -587,103 +684,7 @@ app.post("/api/:resource", async function (req, res, next) {
       })
     }
   } else if (req.params.resource === 'projection') {
-    // FILTER
-    // last x # of games
-    // gamePK between
-    PlayByPlay.aggregate([
-      {
-        '$match': {
-          'name': {
-            '$in': req.body.player_names
-          }
-        }
-      }, {
-        '$lookup': {
-          'from': 'stats',
-          'localField': 'nhl_player_id',
-          'foreignField': 'playerId',
-          'as': 'previousGames',
-          'pipeline': [
-            { '$sort': { 'gamePk': 1 } },
-            { '$limit': req.body.limit }
-          ],
-        }
-      }, {
-        '$project': {
-          'previousGames': {
-            '$let': {
-              'vars': {
-                'red': {
-                  '$reduce': {
-                    'input': {
-                      '$map': {
-                        'input': '$previousGames',
-                        'in': {
-                          '$objectToArray': '$$this'
-                        }
-                      }
-                    },
-                    'initialValue': [],
-                    'in': {
-                      '$concatArrays': [
-                        '$$value', '$$this'
-                      ]
-                    }
-                  }
-                }
-              },
-              'in': {
-                '$arrayToObject': {
-                  '$map': {
-                    'input': {
-                      '$setUnion': [
-                        '$$red.k'
-                      ]
-                    },
-                    'as': 'm',
-                    'in': {
-                      '$let': {
-                        'vars': {
-                          'fil': {
-                            '$filter': {
-                              'input': '$$red',
-                              'as': 'd',
-                              'cond': {
-                                '$eq': [
-                                  '$$d.k', '$$m'
-                                ]
-                              }
-                            }
-                          }
-                        },
-                        'in': {
-                          'k': '$$m',
-                          'v': {
-                            '$divide': [
-                              {
-                                '$sum': '$$fil.v'
-                              }, {
-                                '$size': '$$fil'
-                              }
-                            ]
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          'name':true,
-          'nhl_player_id':true
-        }
-      }
-    ]).then(players => {
-      res.send(players)
-    }).catch(err => {
-      console.log("players", err)
-    })
+    
   }
 })
 app.put('/api/:resource', function (req, res, next) {
