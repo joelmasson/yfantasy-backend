@@ -245,7 +245,7 @@ app.post("/api/yahoo/:resource/:subresource", authMiddleware, function (req, res
   return yf[resource][subresource].apply(yf[resource], args).catch(err => { console.log(err) })
 })
 
-app.get("/api/:resource/:id", authMiddleware, async function (req, res, next) {
+app.get("/api/:resource/:id", async function (req, res, next) {
   if (req.params.resource === 'games') {
     Game.find({}).then(function (games) {
       res.send(games)
@@ -261,6 +261,7 @@ app.get("/api/:resource/:id", authMiddleware, async function (req, res, next) {
       console.log('err', err)
     })
   } else if (req.params.resource === 'players') {
+    console.log(req.params.id)
     // Get all players in a season
     await NHLAPICrawler.crawlPlayers(req.params.id, req.params.id).then(players => {
       let mappedPlayers = players.map(player => {
@@ -365,13 +366,9 @@ app.post("/api/:resource", async function (req, res, next) {
       // FILTER
       // last x # of games
       // gamePK between
-      Player.aggregate([
+      let playerQuery = [
         {
-          '$match': {
-            'name': {
-              '$in': req.body.data.player_names
-            }
-          }
+          '$match': req.body.data
         }, {
           '$lookup': {
             'from': 'stats',
@@ -454,7 +451,16 @@ app.post("/api/:resource", async function (req, res, next) {
             'nhl_player_id':true
           }
         }
-      ]).then(players => {
+      ]
+      if (req.body.sortBy !== undefined) {
+        let sortObj = {
+          "$sort":{
+            ["previousGames." + req.body.sortBy] : -1
+          }
+        };
+        playerQuery.push(sortObj)
+      }
+      Player.aggregate(playerQuery).then(players => {
         res.send(players)
       }).catch(err => {
         console.log("players", err)
@@ -553,17 +559,40 @@ app.post("/api/:resource", async function (req, res, next) {
           }
         })
 
-        playerGameStats = games.map(game => {
+        playerGameStats = games.flatMap(game => {
           let playerStats = game.players.map(player => {
             let playerEvents = game.events.filter(event => {
               if (player === event.playerId) { return event }
             })
-
             let accumulatingStats = { ...defaultGameData };
+
+            let goalEvents = game.events.filter(event => {
+              if (event.type === "GOAL") { return event }
+            })
+            // LAST GOAL
+            if(goalEvents[goalEvents.length-1].players.some(goalEvents => {player === goalEvents.playerId})){
+              accumulatingStats.GAME_WINNING_GOAL = 1;
+            }
+
+            goalEvents.forEach(goal => {
+              if (goal.teamStrength === goal.opposingStrength) {
+                if(goal.players.some(teammate => teammate === player )){
+                  accumulatingStats.PLUS_MINUS += 1
+                }
+                if(goal.opposingPlayers.some(opponet => opponet === player )){
+                  accumulatingStats.PLUS_MINUS -= 1
+                }
+              }
+            })
+
             playerEvents.forEach((event, i) => {
+              if (event.type === 'PENALTY_AGAINST') {
+                accumulatingStats.PENALTY_MINUTES += event.secondaryNumber
+              }
+
               accumulatingStats[event.type] += 1;
               if (playerEvents[i - 1] !== undefined && event.type === "ASSIST" && playerEvents[i - 1].type === "ASSIST") {
-                accumulatingStats.ASSIST_2 = + 1
+                accumulatingStats.ASSIST_2 += 1
               } else {
                 if (event.teamStrength - event.opposingStrength === 1) { // 5 on 4 pp
                   accumulatingStats['5_ON_4_' + event.type] += 1
@@ -586,11 +615,13 @@ app.post("/api/:resource", async function (req, res, next) {
             }).reduce((a, b) => a + b)
 
             if (accumulatingStats['SAVE'] > 0) {
-              accumulatingStats.SHUTOUT = games.filter(game => {
-                if (game.goalieDecisionId === player && game.resultType === "WIN" && game.opposingTeamScore === 0) {
-                  return game
-                }
-              }).length
+              let lastEventOfTheGame = game.events[game.events.length-1]
+              if (lastEventOfTheGame.teamScore === 0 && lastEventOfTheGame.opposingPlayers.some(opponent => opponent === player)){
+                accumulatingStats.SHUTOUT = 1
+              }
+              if (lastEventOfTheGame.opposingTeamScore === 0 && lastEventOfTheGame.players.some(teammate => teammate === player)){
+                accumulatingStats.SHUTOUT = 1
+              }
               accumulatingStats.SAVE_PERCENTAGE = accumulatingStats['SAVE'] / (accumulatingStats['SAVE'] + accumulatingStats['GOAL_ALLOWED'])
               accumulatingStats.GOALS_AGAINST_AVERAGE = (accumulatingStats['GOAL_ALLOWED'] * 60) / accumulatingStats['TOI']
               accumulatingStats.GAME_SCORE = (-0.75 * accumulatingStats['GOAL_ALLOWED']) + (0.1 * accumulatingStats['SAVE'])
@@ -599,8 +630,7 @@ app.post("/api/:resource", async function (req, res, next) {
               accumulatingStats.CORSI_FOR = cf
               let ca = (accumulatingStats['ON_ICE_SAVE'] - accumulatingStats['5_ON_4_ON_ICE_SAVE'] - accumulatingStats['5_ON_3_ON_ICE_SAVE'] - accumulatingStats['4_ON_5_ON_ICE_SAVE'] - accumulatingStats['3_ON_5_ON_ICE_SAVE']) + (accumulatingStats['ON_ICE_BLOCKED_SHOT'] - accumulatingStats['5_ON_4_ON_ICE_BLOCKED_SHOT'] - accumulatingStats['5_ON_3_ON_ICE_BLOCKED_SHOT'] - accumulatingStats['4_ON_5_ON_ICE_BLOCKED_SHOT'] - accumulatingStats['3_ON_5_ON_ICE_BLOCKED_SHOT']) + (accumulatingStats['ON_ICE_MISSED_SHOT'] - accumulatingStats['5_ON_4_ON_ICE_MISSED_SHOT'] - accumulatingStats['5_ON_3_ON_ICE_MISSED_SHOT'] - accumulatingStats['4_ON_5_ON_ICE_MISSED_SHOT'] - accumulatingStats['3_ON_5_ON_ICE_MISSED_SHOT'])
               accumulatingStats.CORSI_AGAINST = ca
-              accumulatingStats.PLUS_MINUS = (accumulatingStats['ON_ICE_GOAL'] - accumulatingStats['5_ON_4_ON_ICE_GOAL'] - accumulatingStats['5_ON_3_ON_ICE_GOAL'] - accumulatingStats['4_ON_5_ON_ICE_GOAL'] - accumulatingStats['3_ON_5_ON_ICE_GOAL']) - (accumulatingStats['ON_ICE_GOAL_ALLOWED'] - accumulatingStats['5_ON_4_ON_ICE_GOAL_ALLOWED'] - accumulatingStats['5_ON_3_ON_ICE_GOAL_ALLOWED'] - accumulatingStats['4_ON_5_ON_ICE_GOAL_ALLOWED'] - accumulatingStats['3_ON_5_ON_ICE_GOAL_ALLOWED'])
-              accumulatingStats.GAME_SCORE = (0.75 * accumulatingStats['GOAL']) + (0.7 * accumulatingStats['ASSIST']) + (0.55 * accumulatingStats['ASSIST_2']) + (0.075 * accumulatingStats['SHOT']) + (0.05 * accumulatingStats['BLOCKED_SHOT']) + (0.15 * accumulatingStats['PENALTY_AGAINST']) - (0.15 * accumulatingStats['PENALTY_FOR']) + (0.01 * accumulatingStats['FACEOFF_WIN']) - (0.01 * accumulatingStats['FACEOFF_LOSS']) + (0.05 * cf) - (0.05 * ca) + (0.15 * accumulatingStats['ON_ICE_GOAL']) - (0.15 * accumulatingStats['ON_ICE_GOAL_ALLOWED'])
+              accumulatingStats.GAME_SCORE = (0.75 * accumulatingStats['GOAL']) + (0.7 * accumulatingStats['ASSIST']) + (0.55 * accumulatingStats['ASSIST_2']) + (0.075 * accumulatingStats['SHOT']) + (0.05 * accumulatingStats['BLOCKED_SHOT']) + (0.15 * accumulatingStats['PENALTY_MINUTES']) + (0.01 * accumulatingStats['FACEOFF_WIN']) - (0.01 * accumulatingStats['FACEOFF_LOSS']) + (0.05 * cf) - (0.05 * ca) + (0.15 * accumulatingStats['PLUS_MINUS']) + (0.15 * accumulatingStats['HIT']) + (0.65 * (accumulatingStats['5_ON_4_GOAL'] + accumulatingStats['5_ON_3_GOAL'] + accumulatingStats['5_ON_4_ASSIST'] + accumulatingStats['5_ON_3_ASSIST']))
             }
 
             let stats = { ...accumulatingStats, 'TOI': toi }
@@ -618,23 +648,24 @@ app.post("/api/:resource", async function (req, res, next) {
       }).catch(err => {
         console.log(err)
       })
-      // UPDATE SEASON WITH DATE OF LAST GAME LOGGED
-      await Season.updateOne({ game_key: req.body.game_key }, { $set: { lastGameDayPlayed: req.body.end } }).then(function (data) {
-        result.push(data)
-        // res.send(data);
-      }).catch(function (err) {
-        console.log('err', err)
-      });
 
       if (playerGameStats.length > 0) {
         // ADD NEW GAME DATA INTO STATS COLLECTION
-        await PlayerStats.collection.bulkWrite(...playerGameStats).then(function (data) {
+        await PlayerStats.collection.bulkWrite(playerGameStats).then(function (data) {
           console.log('PS', data)
           // res.send(data)
           result.push(data)
         }).catch(function (err) {
           console.log('P err', err)
         })
+
+        // UPDATE SEASON WITH DATE OF LAST GAME LOGGED
+        await Season.updateOne({ game_key: req.body.game_key }, { $set: { lastGameDayPlayed: req.body.end } }).then(function (data) {
+          result.push(data)
+          // res.send(data);
+        }).catch(function (err) {
+          console.log('err', err)
+        });
 
         res.send(result)
       } else {
