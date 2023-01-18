@@ -362,165 +362,143 @@ app.post("/api/:resource", async function (req, res, next) {
       console.log('err', err)
     });
   } else if (req.params.resource === 'players') {
-    if(req.body.statType === 'averages') {
-      // FILTER
-      // last x # of games
-      // gamePK between
-      let playerQuery = [
-        {
-          '$match': req.body.data
-        }, {
-          '$lookup': {
-            'from': 'stats',
-            'localField': 'nhl_player_id',
-            'foreignField': 'playerId',
-            'as': 'previousGames',
-            'pipeline': [
-              { '$sort': { 'gamePk': 1 } },
-              { '$limit': req.body.limit }
-            ],
+    let playersQuery = [
+      {
+        '$match': req.body.data
+      },
+      {
+        '$lookup': {
+          'from': 'stats',
+          'localField': 'nhl_player_id',
+          'foreignField': 'playerId',
+          'as': 'Games',
+          'pipeline': [
+            { '$match': { 'gamePk': { $gt: req.body.season } } },
+            { '$sort': { 'gamePk': -1 } }
+          ],
+        }
+      },{
+        $project: {
+          'name': true,
+          'nhl_player_id': true,
+        }
+      }
+    ];
+    if (req.body.stats){
+      playersQuery[2].$project.previousGames = {
+        '$filter':{
+          'input': '$Games',
+          'as':'previousGames',
+          'cond': { 
+            '$and':[
+              { '$gte': [ "$$previousGames.gamePk", req.body.start ] },
+              { '$lt': [ "$$previousGames.gamePk", req.body.end ] }
+            ] 
           }
-        }, {
-          '$project': {
-            'previousGames': {
-              '$let': {
-                'vars': {
-                  'red': {
-                    '$reduce': {
-                      'input': {
-                        '$map': {
-                          'input': '$previousGames',
-                          'in': {
-                            '$objectToArray': '$$this'
-                          }
-                        }
-                      },
-                      'initialValue': [],
-                      'in': {
-                        '$concatArrays': [
-                          '$$value', '$$this'
-                        ]
-                      }
+        }
+      }
+    }
+    if (req.body.statType === 'averages') {
+      playersQuery[2].$project.averages = {
+        '$let': {
+          'vars': {
+            'red': {
+              '$reduce': {
+                'input': {
+                  '$map': {
+                    'input': {'$slice':["$Games",0,req.body.limit]},
+                    'in': {
+                      '$objectToArray': '$$this'
                     }
                   }
                 },
+                'initialValue': [],
                 'in': {
-                  '$arrayToObject': {
-                    '$map': {
-                      'input': {
-                        '$setUnion': [
-                          '$$red.k'
-                        ]
-                      },
-                      'as': 'm',
-                      'in': {
-                        '$let': {
-                          'vars': {
-                            'fil': {
-                              '$filter': {
-                                'input': '$$red',
-                                'as': 'd',
-                                'cond': {
-                                  '$eq': [
-                                    '$$d.k', '$$m'
-                                  ]
-                                }
-                              }
-                            }
-                          },
-                          'in': {
-                            'k': '$$m',
-                            'v': {
-                              '$divide': [
-                                {
-                                  '$sum': '$$fil.v'
-                                }, {
-                                  '$size': '$$fil'
-                                }
-                              ]
-                            }
+                  '$concatArrays': [
+                    '$$value', '$$this'
+                  ]
+                }
+              }
+            }
+          },
+          'in': {
+            '$arrayToObject': {
+              '$map': {
+                'input': {
+                  '$setUnion': [
+                    '$$red.k'
+                  ]
+                },
+                'as': 'm',
+                'in': {
+                  '$let': {
+                    'vars': {
+                      'fil': {
+                        '$filter': {
+                          'input': '$$red',
+                          'as': 'd',
+                          'cond': {
+                            '$eq': [
+                              '$$d.k', '$$m'
+                            ]
                           }
                         }
+                      }
+                    },
+                    'in': {
+                      'k': '$$m',
+                      'v': {
+                        '$divide': [
+                          {
+                            '$sum': '$$fil.v'
+                          }, {
+                            '$size': '$$fil'
+                          }
+                        ]
                       }
                     }
                   }
                 }
               }
-            },
-            'name':true,
-            'nhl_player_id':true
-          }
-        }
-      ]
-      if (req.body.sortBy !== undefined) {
-        let sortObj = {
-          "$sort":{
-            ["previousGames." + req.body.sortBy] : -1
-          }
-        };
-        playerQuery.push(sortObj)
-      }
-      Player.aggregate(playerQuery).then(players => {
-        res.send(players)
-      }).catch(err => {
-        console.log("players", err)
-      })
-    } else if (req.body.queryBy === 'name') {
-      PlayByPlay.aggregate([
-        {
-          '$match': {
-            'name': {
-              '$in': req.body.player_names
             }
           }
-        }, {
-          '$lookup': {
-            'from': 'stats',
-            'localField': 'nhl_player_id',
-            'foreignField': 'playerId',
-            'as': 'previousGames'
-          }
         }
-      ]).then(players => {
-        res.send(players)
-      }).catch(err => {
-        console.log("players", err)
-      })
-    } else if (req.body.teams !== undefined) {
-      Player.find({ currentTeamId: { $in: req.body.teams }, fantasyTeamId: null }).then(players => {
-        res.send(players)
-      }).catch(err => {
-        console.log("plauers", err)
-      })
-    } else if (req.body.action === 'updateOwnership') {
-      let playerUpdate = req.body.players.map(player => {
-        return {
-          'updateOne': {
-            'filter': { name: player.name },
-            'update': { $set: { fantasyTeamId: player.fantasyTeamId } },
-          }
-        }
-      })
-      let cleanup = [{
-        'updateMany': {
-          'filter': { fantasyTeamId: { $ne: null } },
-          'update': { $set: { fantasyTeamId: null } },
-        }
-      }]
-      let updatePlayerOwnership = cleanup.concat(playerUpdate)
-      Player.collection.bulkWrite(updatePlayerOwnership).then(function (data) {
-        res.send(data);
-      }).catch(function (err) {
-        console.log('err 1', err)
-      });
-    } else {
-      console.log('proposed', req.body)
-      Player.find(req.body.query).sort(req.body.sort).limit(req.body.limit).then(players => {
-        res.send(players)
-      }).catch(err => {
-        console.log("players", err)
-      })
+      }
     }
+    if (req.body.sortBy !== undefined) {
+      let sortObj = {
+        "$sort": {
+          ["averages." + req.body.sortBy]: -1
+        }
+      };
+      playersQuery.push(sortObj)
+    }
+    Player.aggregate(playersQuery).then(players => {
+      res.send(players)
+    }).catch(err => {
+      console.log("players", err)
+    })
+  } else if (req.body.action === 'updateOwnership') {
+    let playerUpdate = req.body.players.map(player => {
+      return {
+        'updateOne': {
+          'filter': { name: player.name },
+          'update': { $set: { fantasyTeamId: player.fantasyTeamId } },
+        }
+      }
+    })
+    let cleanup = [{
+      'updateMany': {
+        'filter': { fantasyTeamId: { $ne: null } },
+        'update': { $set: { fantasyTeamId: null } },
+      }
+    }]
+    let updatePlayerOwnership = cleanup.concat(playerUpdate)
+    Player.collection.bulkWrite(updatePlayerOwnership).then(function (data) {
+      res.send(data);
+    }).catch(function (err) {
+      console.log('err 1', err)
+    });
   } else if (req.params.resource === 'season') {
     Season.create(req.body.data).then(function (season) {
       res.send(season);
@@ -570,16 +548,16 @@ app.post("/api/:resource", async function (req, res, next) {
               if (event.type === "GOAL") { return event }
             })
             // LAST GOAL
-            if(goalEvents[goalEvents.length-1].players.some(goalEvents => {player === goalEvents.playerId})){
+            if (goalEvents[goalEvents.length - 1].players.some(goalEvents => { player === goalEvents.playerId })) {
               accumulatingStats.GAME_WINNING_GOAL = 1;
             }
 
             goalEvents.forEach(goal => {
               if (goal.teamStrength === goal.opposingStrength) {
-                if(goal.players.some(teammate => teammate === player )){
+                if (goal.players.some(teammate => teammate === player)) {
                   accumulatingStats.PLUS_MINUS += 1
                 }
-                if(goal.opposingPlayers.some(opponet => opponet === player )){
+                if (goal.opposingPlayers.some(opponet => opponet === player)) {
                   accumulatingStats.PLUS_MINUS -= 1
                 }
               }
@@ -615,11 +593,11 @@ app.post("/api/:resource", async function (req, res, next) {
             }).reduce((a, b) => a + b)
 
             if (accumulatingStats['SAVE'] > 0) {
-              let lastEventOfTheGame = game.events[game.events.length-1]
-              if (lastEventOfTheGame.teamScore === 0 && lastEventOfTheGame.opposingPlayers.some(opponent => opponent === player)){
+              let lastEventOfTheGame = game.events[game.events.length - 1]
+              if (lastEventOfTheGame.teamScore === 0 && lastEventOfTheGame.opposingPlayers.some(opponent => opponent === player)) {
                 accumulatingStats.SHUTOUT = 1
               }
-              if (lastEventOfTheGame.opposingTeamScore === 0 && lastEventOfTheGame.players.some(teammate => teammate === player)){
+              if (lastEventOfTheGame.opposingTeamScore === 0 && lastEventOfTheGame.players.some(teammate => teammate === player)) {
                 accumulatingStats.SHUTOUT = 1
               }
               accumulatingStats.SAVE_PERCENTAGE = accumulatingStats['SAVE'] / (accumulatingStats['SAVE'] + accumulatingStats['GOAL_ALLOWED'])
@@ -714,8 +692,6 @@ app.post("/api/:resource", async function (req, res, next) {
         console.log(err)
       })
     }
-  } else if (req.params.resource === 'projection') {
-    
   }
 })
 app.put('/api/:resource', function (req, res, next) {
