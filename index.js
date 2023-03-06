@@ -580,11 +580,52 @@ app.post("/api/:resource", async function (req, res, next) {
         });
       // GET ALL EVENTS AND CALCULATE ADVANCED STATS
       let playerGameStats = [];
+      let activePlayers = [];
+      let inactivePlayers = [];
       await NHLAPICrawler.crawlEvents(req.body.start, req.body.end)
         .then((events) => {
           let games = events.map((game) => {
             return game.gamePk;
           });
+
+          let teamIds = events.map((game) => {
+            return game.teamId;
+          });
+
+          inactivePlayers = [...new Set(teamIds)].flatMap((teamId) => {
+            return {
+              updateOne: {
+                filter: { currentTeamId: teamId },
+                update: { $set: { active: false } },
+              },
+            };
+          });
+
+          activePlayers = [...new Set(games)].flatMap((game) => {
+            let gameEvents = events.filter((event) => {
+              if (event.gamePk === game) {
+                return event;
+              }
+            });
+            let playerIds = gameEvents.map((event) => {
+              return event.playerId;
+            });
+            let player = [...new Set(playerIds)].map((playerId) => {
+              let teamId = gameEvents.find((event) => {
+                if (playerId === event.playerId) {
+                  return event;
+                }
+              }).teamId;
+              return {
+                updateOne: {
+                  filter: { nhl_player_id: playerId },
+                  update: { $set: { currentTeamId: teamId, active: true } },
+                },
+              };
+            });
+            return [...new Set(player)];
+          });
+
           games = [...new Set(games)].map((game) => {
             let gameEvents = events.filter((event) => {
               if (event.gamePk === game) {
@@ -799,6 +840,18 @@ app.post("/api/:resource", async function (req, res, next) {
           })
           .catch(function (err) {
             console.log("P err", err);
+          });
+
+        // UPDATE ALL PLAYERS WITH ACCURATE PRO TEAMS
+        await Player.collection
+          .bulkWrite(inactivePlayers.concat(activePlayers))
+          .then(function (data) {
+            console.log("PLAYER-TEAM", data);
+            // res.send(data)
+            result.push(data);
+          })
+          .catch(function (err) {
+            console.log("PLAYER-TEAM err", err);
           });
 
         // UPDATE SEASON WITH DATE OF LAST GAME LOGGED
