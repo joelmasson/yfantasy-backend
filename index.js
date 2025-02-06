@@ -185,7 +185,7 @@ app.post(
       resource = req.params.resource,
       subresource = req.params.subresource,
       query = req.body;
-      
+
     Object.map = function (obj) {
       var key,
         arr = [];
@@ -324,7 +324,7 @@ app.get("/api/:resource/:id?", async function (req, res, next) {
   } else if (req.params.resource === "playbyplay") {
     PlayByPlay.find({ gamePK: req.params.id })
       .then(function (play) {
-        console.log(play);
+        // console.log(play);
         if (play.length === 0) {
           res.send({ error: "Play by Play not found" });
         } else {
@@ -374,8 +374,9 @@ app.get("/api/:resource/:id?", async function (req, res, next) {
     request(
       "https://api-web.nhle.com/v1/standings/" + req.params.id,
       function (error, response, body) {
-        if (error){
-          return error
+        console.log(body);
+        if (error) {
+          return error;
         } else if (!error && response.statusCode == 200) {
           res.send(body);
         }
@@ -385,10 +386,22 @@ app.get("/api/:resource/:id?", async function (req, res, next) {
     request(
       "https://api-web.nhle.com/v1/schedule/" + req.params.id,
       function (error, response, body) {
-        if (error){
-          return error
+        if (error) {
+          return error;
         } else if (!error && response.statusCode == 200) {
-          console.log(body)
+          // console.log(body);
+          res.send(body);
+        }
+      }
+    );
+  } else if (req.params.resource === "schedule-calendar") {
+    request(
+      "https://api-web.nhle.com/v1/schedule-calendar/" + req.params.id,
+      function (error, response, body) {
+        if (error) {
+          return error;
+        } else if (!error && response.statusCode == 200) {
+          // console.log(body);
           res.send(body);
         }
       }
@@ -827,10 +840,10 @@ app.post("/api/:resource", async function (req, res, next) {
                   0.15 * accumulatingStats["PLUS_MINUS"] +
                   0.15 * accumulatingStats["HIT"] +
                   0.65 *
-                  (accumulatingStats["5_ON_4_GOAL"] +
-                    accumulatingStats["5_ON_3_GOAL"] +
-                    accumulatingStats["5_ON_4_ASSIST"] +
-                    accumulatingStats["5_ON_3_ASSIST"]);
+                    (accumulatingStats["5_ON_4_GOAL"] +
+                      accumulatingStats["5_ON_3_GOAL"] +
+                      accumulatingStats["5_ON_4_ASSIST"] +
+                      accumulatingStats["5_ON_3_ASSIST"]);
               }
 
               let stats = { ...accumulatingStats, TOI: toi };
